@@ -1,6 +1,6 @@
 **ZAP Usage (Kali Linux) — Hướng Dẫn Nhanh**
 
-Mục đích: hướng dẫn cách chạy `filter_katana.py` để tạo `katana.filtered.txt` và cách dùng `use-ZAP.py` với ZAP trên Kali Linux (cả passive + tùy chọn active scan).
+Mục đích: hướng dẫn cách chạy `filter_katana.py` để tạo `katana.filtered.txt` và cách dùng `use-ZAP.py` với ZAP trên Kali Linux theo chế độ tự động.
 
 Yêu cầu trước khi chạy:
 - Kali Linux hoặc máy ảo Kali với quyền root/user có sudo
@@ -53,7 +53,7 @@ Tham số hữu ích:
 - `-o/--output`: file đầu ra (mặc định `katana.filtered.txt`)
 - `-b/--base-url`: base URL để ghép path (ví dụ `http://192.168.144.155:3000`)
 
-4) Chạy `use-ZAP.py` (passive scan / thu thập findings)
+4) Chạy `use-ZAP.py` (tự động quét)
 
 Ví dụ: quét tất cả targets trong `katana.filtered.txt` (mặc định lấy hết):
 
@@ -70,20 +70,30 @@ python3 use-ZAP.py -n 2
 Bật Active Scan (đọc targets, chạy active scan từng target trước khi lấy findings):
 
 ```bash
-python3 use-ZAP.py --active-scan
+python3 use-ZAP.py
+```
+
+Nếu bạn chỉ muốn thu thập passive findings và không chạy active scan tự động, dùng:
+
+```bash
+python3 use-ZAP.py --no-active-scan
 ```
 
 Ghi chú các tham số chính thêm:
 - `-b/--base-url` : ghi đè base URL nếu muốn
 - `-p/--proxy` : ZAP proxy (mặc định `http://127.0.0.1:8080`)
-- `--active-scan` : bật active scan (chú ý: tốn thời gian và phát nhiều request)
+- `--active-scan` : bật active scan tự động, đây là mặc định
+- `--no-active-scan` : tắt active scan tự động nếu chỉ muốn passive collection
 
 5) Output và kiểm tra
 
-- `use-ZAP.py` in ra JSON chuẩn (theo mẫu `json-format-template.json`) ra stdout. Nếu muốn lưu vào file, chuyển hướng stdout:
+- `use-ZAP.py` sẽ tự ghi đè file `zap_output.json` mỗi lần chạy, đồng thời vẫn in JSON ra stdout.
+- Nếu muốn đổi tên file output, dùng `-o/--output-file`.
+
+Ví dụ:
 
 ```bash
-python3 use-ZAP.py --active-scan > zap_output.json
+python3 use-ZAP.py -o my_zap_output.json
 ```
 
 6) Lưu ý vận hành và an toàn
@@ -94,6 +104,7 @@ python3 use-ZAP.py --active-scan > zap_output.json
 7) Troubleshooting nhanh
 - Nếu không kết nối được ZAP: kiểm tra ZAP đang chạy và proxy URL đúng.
 - Nếu không thấy findings: chờ lâu hơn sau access/active-scan hoặc kiểm tra policy active scan trong ZAP GUI.
+- Nếu `raw_request` hoặc `raw_response` vẫn trống ở vài alert, đó thường là alert metadata không kèm raw HTTP; script sẽ cố lấy từ message history và chỉ để trống khi ZAP không có bản ghi khớp.
 
 8) Muốn tôi tự động thêm: cấu hình API key support, ghi JSON ra file tự động, hoặc thêm wrapper systemd/service để chạy headless trên Kali.
 

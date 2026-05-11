@@ -13,6 +13,7 @@ from zapv2 import ZAPv2
 
 BASE_URL = "http://192.168.144.155:3000"
 DEFAULT_INPUT_FILE = "katana.filtered.txt"
+DEFAULT_OUTPUT_FILE = "zap_output.json"
 
 # ==========================================
 # Disable SSL warnings
@@ -59,6 +60,7 @@ class ZapCollector:
         self.proxy_url = proxy_url
 
         self.zap = ZAPv2(proxies={"http": proxy_url, "https": proxy_url})
+        self._message_cache = {}
 
     # ======================================
     # ACCESS SINGLE PAGE
@@ -74,9 +76,9 @@ class ZapCollector:
 
             requests.get(target_url, proxies=proxies, verify=False, timeout=10)
 
-            print("[*] Truy cập thành công! " "Đợi 3 giây để ZAP Passive Scan...")
+            print("[*] Truy cập thành công! ZAP đang xử lý nền...")
 
-            time.sleep(3)
+            time.sleep(1)
 
         except Exception as e:
 
@@ -89,6 +91,75 @@ class ZapCollector:
             print(f"\n[*] [{index}/{len(target_urls)}] Đang xử lý: {target_url}")
 
             self.access_single_page(target_url)
+
+    def _get_messages_for_target(self, target_url: str):
+
+        if target_url not in self._message_cache:
+
+            self._message_cache[target_url] = self.zap.core.messages(baseurl=target_url)
+
+        return self._message_cache[target_url]
+
+    def _find_message_for_alert(self, alert: dict, target_url: str):
+
+        message_id = (
+            alert.get("messageId")
+            or alert.get("messageid")
+            or alert.get("message_id")
+        )
+
+        if message_id:
+
+            try:
+
+                return self.zap.core.message(message_id)
+
+            except Exception:
+
+                pass
+
+        alert_url = alert.get("url", "")
+        alert_method = alert.get("method", "GET").upper()
+        alert_path = urllib.parse.urlsplit(alert_url).path
+
+        for msg in self._get_messages_for_target(target_url):
+
+            request_header = msg.get("requestHeader", "")
+            if not request_header:
+                continue
+
+            request_line = request_header.split("\r\n", 1)[0]
+            parts = request_line.split(" ")
+            if len(parts) < 2:
+                continue
+
+            request_method = parts[0].upper()
+            request_url = parts[1]
+
+            parsed_request_url = urllib.parse.urlsplit(request_url)
+            request_path = parsed_request_url.path
+
+            if request_method == alert_method and request_path == alert_path:
+                return msg
+
+        return None
+
+    def _format_raw_request(self, message: dict) -> str:
+
+        return message.get("requestHeader", "") if message else ""
+
+    def _format_raw_response(self, message: dict) -> str:
+
+        if not message:
+            return ""
+
+        response_header = message.get("responseHeader", "")
+        response_body = message.get("responseBody", "")
+
+        if response_body:
+            return f"{response_header}\n\n{response_body}"
+
+        return response_header
 
     def start_active_scan(self, target_url: str):
 
@@ -143,6 +214,8 @@ class ZapCollector:
             if alert.get("name") in ignore_alerts:
                 continue
 
+            matching_message = self._find_message_for_alert(alert, target_url)
+
             finding = NormalizedFinding(
                 endpoint=alert.get("url", ""),
                 method=alert.get("method", "GET"),
@@ -151,8 +224,8 @@ class ZapCollector:
                 severity=severity_map.get(alert.get("risk"), "INFO"),
                 confidence=alert.get("confidence", ""),
                 payload=alert.get("attack", ""),
-                raw_request=alert.get("requestHeader", "")[:1000],
-                raw_response=alert.get("responseHeader", "")[:1000],
+                raw_request=self._format_raw_request(matching_message)[:1000],
+                raw_response=self._format_raw_response(matching_message)[:2000],
             )
 
             normalized_findings.append(finding.model_dump())
@@ -316,12 +389,28 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--active-scan",
+        dest="active_scan",
         action="store_true",
-        help="Kích hoạt active scan của ZAP cho các target đã nạp",
+        default=True,
+        help="Kích hoạt active scan của ZAP cho các target đã nạp (mặc định bật)",
+    )
+
+    parser.add_argument(
+        "--no-active-scan",
+        dest="active_scan",
+        action="store_false",
+        help="Tắt active scan tự động nếu chỉ muốn thu thập passive findings",
     )
 
     parser.add_argument(
         "-p", "--proxy", default="http://127.0.0.1:8080", help="ZAP Proxy URL"
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output-file",
+        default=DEFAULT_OUTPUT_FILE,
+        help="File JSON đầu ra sẽ được ghi đè mỗi lần chạy",
     )
 
     args = parser.parse_args()
@@ -377,7 +466,13 @@ if __name__ == "__main__":
 
         print("\n=== KẾT QUẢ JSON CHUẨN ===")
 
-        print(json.dumps(final_output, indent=4, ensure_ascii=False))
+        json_text = json.dumps(final_output, indent=4, ensure_ascii=False)
+        print(json_text)
+
+        output_path = Path(args.output_file)
+        output_path.write_text(json_text + "\n", encoding="utf-8")
+
+        print(f"[+] Đã ghi JSON vào: {output_path}")
 
     except Exception as e:
 
