@@ -1,0 +1,85 @@
+{
+	"target": "https://phimmoichillv2.vercel.app/",
+	"zap_findings_count": 7,
+	"zap_findings": [
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "x-frame-options",
+			"finding_type": "Missing Anti-clickjacking Header",
+			"severity": "MEDIUM",
+			"confidence": "Medium",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		},
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "cache-control",
+			"finding_type": "Re-examine Cache-control Directives",
+			"severity": "INFO",
+			"confidence": "Low",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		},
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "",
+			"finding_type": "Content Security Policy (CSP) Header Not Set",
+			"severity": "MEDIUM",
+			"confidence": "High",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		},
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "",
+			"finding_type": "Cross-Domain Misconfiguration",
+			"severity": "MEDIUM",
+			"confidence": "Medium",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		},
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "https://connect.facebook.net/vi_VN/sdk.js#xfbml=1&version=v21.0&appId=1251987202765089",
+			"finding_type": "Cross-Domain JavaScript Source File Inclusion",
+			"severity": "LOW",
+			"confidence": "Medium",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		},
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "",
+			"finding_type": "Sub Resource Integrity Attribute Missing",
+			"severity": "MEDIUM",
+			"confidence": "High",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		},
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "x-content-type-options",
+			"finding_type": "X-Content-Type-Options Header Missing",
+			"severity": "LOW",
+			"confidence": "Medium",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		}
+	],
+	"reflected_params_count": 0,
+	"reflected_params": []
+}
