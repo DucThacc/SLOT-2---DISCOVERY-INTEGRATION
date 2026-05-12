@@ -53,6 +53,21 @@ class NormalizedFinding(BaseModel):
 
 class ZapCollector:
 
+    SQLI_PAYLOADS = [
+        "' OR '1'='1",
+        "1' OR '1'='1",
+        "admin' --",
+        "' OR 1=1 --",
+        "1' UNION SELECT NULL --",
+    ]
+
+    XSS_PAYLOADS = [
+        "<script>alert('xss')</script>",
+        "'\"><script>alert('xss')</script>",
+        "<img src=x onerror=alert('xss')>",
+        "javascript:alert('xss')",
+    ]
+
     def __init__(self, proxy_url="http://127.0.0.1:8080"):
 
         print(f"[*] Đang kết nối tới ZAP Proxy tại {proxy_url}...")
@@ -83,6 +98,39 @@ class ZapCollector:
         except Exception as e:
 
             print(f"[!] Không thể truy cập {target_url}: {e}")
+
+    def send_payloads_to_targets(self, target_urls: List[str]):
+
+        print("\n[*] Gửi payload để phát hiện High Severity issues...")
+
+        proxies = {"http": self.proxy_url, "https": self.proxy_url}
+
+        for target_url in target_urls:
+
+            parsed = urllib.parse.urlparse(target_url)
+            params = urllib.parse.parse_qs(parsed.query)
+
+            if not params:
+                continue
+
+            for param_name in params.keys():
+
+                for payload in self.SQLI_PAYLOADS + self.XSS_PAYLOADS:
+
+                    modified_params = params.copy()
+                    modified_params[param_name] = [payload]
+
+                    new_query = urllib.parse.urlencode(modified_params, doseq=True)
+                    payload_url = urllib.parse.urlunparse(
+                        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
+                    )
+
+                    try:
+                        requests.get(payload_url, proxies=proxies, verify=False, timeout=10)
+                    except Exception:
+                        pass
+
+        print("[*] Payload injection hoàn tất")
 
     def access_pages(self, target_urls: List[str]):
 
@@ -430,6 +478,12 @@ if __name__ == "__main__":
         # ==================================
 
         collector.access_pages(targets)
+
+        # ==================================
+        # STEP 1.5 - PAYLOAD INJECTION (phát hiện High Severity)
+        # ==================================
+
+        collector.send_payloads_to_targets(targets)
 
         # ==================================
         # STEP 2 - ACTIVE SCAN

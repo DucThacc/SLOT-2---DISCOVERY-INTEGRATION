@@ -85,7 +85,18 @@ Ghi chú các tham số chính thêm:
 - `--active-scan` : bật active scan tự động, đây là mặc định
 - `--no-active-scan` : tắt active scan tự động nếu chỉ muốn passive collection
 
-5) Output và kiểm tra
+5) Cách script phát hiện HIGH Severity issues
+
+Giờ `use-ZAP.py` và `useZAP2.py` sẽ tự động:
+1. Truy cập từng target URL
+2. **Gửi payload SQL Injection + XSS vào các parameter** (vd: `?doc=', --`, `?id=<script>`)
+3. ZAP qua proxy sẽ bắt được các payload này
+4. Chạy active scan để phân tích
+5. Findings sẽ include HIGH severity SQL Injection, XSS, v.v.
+
+Cách này tương tự với việc bạn thủ công nhập `'` trong DVWA UI — script sẽ tự động làm điều đó cho tất cả parameter.
+
+6) Output và kiểm tra
 
 - `use-ZAP.py` sẽ tự ghi đè file `zap_output.json` mỗi lần chạy, đồng thời vẫn in JSON ra stdout.
 - Nếu muốn đổi tên file output, dùng `-o/--output-file`.
@@ -105,6 +116,7 @@ python3 use-ZAP.py -o my_zap_output.json
 - Nếu không kết nối được ZAP: kiểm tra ZAP đang chạy và proxy URL đúng.
 - Nếu không thấy findings: chờ lâu hơn sau access/active-scan hoặc kiểm tra policy active scan trong ZAP GUI.
 - Nếu `raw_request` hoặc `raw_response` vẫn trống ở vài alert, đó thường là alert metadata không kèm raw HTTP; script sẽ cố lấy từ message history và chỉ để trống khi ZAP không có bản ghi khớp.
+- **Nếu không thấy HIGH severity issues**: Đảm bảo payload injection step (STEP 1.5) đã chạy. Script sẽ gửi SQL injection + XSS payload vào các parameter trong URL trước khi active scan. Nếu vẫn không có, tăng `-n` hoặc chạy lại với `--no-active-scan` rồi check raw findings.
 
 8) Muốn tôi tự động thêm: cấu hình API key support, ghi JSON ra file tự động, hoặc thêm wrapper systemd/service để chạy headless trên Kali.
 
