@@ -13,8 +13,9 @@ from zapv2 import ZAPv2
 
 
 BASE_URL = "http://192.168.144.155:3000"
-DEFAULT_INPUT_FILE = "katana.filtered.txt"
+DEFAULT_INPUT_FILE = "katana.minimal.txt"
 DEFAULT_OUTPUT_FILE = "zap_output.json"
+DEFAULT_PROXY = "http://127.0.0.1:8080"
 
 # ==========================================
 # Disable SSL warnings
@@ -69,7 +70,7 @@ class ZapCollector:
         "javascript:alert('xss')",
     ]
 
-    def __init__(self, proxy_url="http://127.0.0.1:8080", base_url: str = BASE_URL, auth_user: str = "admin", auth_pass: str = "password", no_auth: bool = False):
+    def __init__(self, proxy_url: str = DEFAULT_PROXY, base_url: str = BASE_URL, auth_user: str = "admin", auth_pass: str = "password", no_auth: bool = False):
 
         print(f"[*] Đang kết nối tới ZAP Proxy tại {proxy_url}...")
 
@@ -84,7 +85,7 @@ class ZapCollector:
         self.session.verify = False
 
         self.zap = ZAPv2(proxies={"http": proxy_url, "https": proxy_url})
-        self._message_cache = {}
+        self._message_cache: dict[str, list[dict]] = {}
 
     def is_login_page(self, html: str, page_url: str = "") -> bool:
 
@@ -197,6 +198,22 @@ class ZapCollector:
             print(f"\n[*] [{index}/{len(target_urls)}] Đang xử lý: {target_url}")
 
             self.access_single_page(target_url)
+
+    def submit_form_requests(self, target_urls: List[str]):
+
+        print("\n[*] Đang kiểm tra request đầu vào từ Katana minimal...")
+
+        submitted = 0
+
+        for target_url in target_urls:
+
+            parsed = urllib.parse.urlparse(target_url)
+            if not parsed.query:
+                continue
+
+            submitted += 1
+
+        print(f"[*] Request có query đã ghi nhận: {submitted}")
 
     def _get_messages_for_target(self, target_url: str):
 
@@ -563,6 +580,12 @@ if __name__ == "__main__":
         # ==================================
 
         collector.access_pages(targets)
+
+        # ==================================
+        # STEP 1.5 - SUBMIT FORM-LIKE REQUESTS
+        # ==================================
+
+        collector.submit_form_requests(targets)
 
         # ==================================
         # STEP 1.5 - PAYLOAD INJECTION (phát hiện High Severity)
