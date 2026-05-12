@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+set -u
 
 #################################################
 # CONFIG
@@ -27,8 +29,10 @@ echo "[+] Getting CSRF token..."
 
 TOKEN=$(curl -s -c cookies.txt \
 $TARGET/login.php \
-| grep user_token \
-| sed -n "s/.*value='\([^']*\)'.*/\1/p")
+| tr '"' "'" \
+| grep -o "name='user_token' value='[^']*'" \
+| sed -n "s/.*value='\([^']*\)'.*/\1/p" \
+| head -n 1)
 
 if [ -z "$TOKEN" ]; then
     echo "[-] Failed to get CSRF token"
@@ -47,7 +51,13 @@ curl -s -L \
 -b cookies.txt \
 -c cookies.txt \
 -d "username=$USER&password=$PASS&user_token=$TOKEN&Login=Login" \
-$TARGET/login.php > /dev/null
+$TARGET/login.php > login_response.html
+
+if grep -qi "login ::" login_response.html; then
+    echo "[-] Login POST still returned login page"
+    echo "[!] Check credentials or CSRF token handling"
+    exit 1
+fi
 
 #################################################
 # EXTRACT PHPSESSID
@@ -74,7 +84,7 @@ curl -s -L \
 -b cookies.txt \
 -c cookies.txt \
 $TARGET/index.php \
-| grep -qi "Logout"
+| grep -Eqi "Logout|logout.php|Change Password|Damn Vulnerable Web Application"
 
 if [ $? -ne 0 ]; then
     echo "[-] Login failed"
@@ -102,6 +112,12 @@ if command -v httpx >/dev/null 2>&1; then
         # Last-resort: basic httpx invocation
         httpx -title -status-code -H "Cookie: $COOKIE" "$TARGET" > "$HTTPX_OUT" 2>/dev/null || echo "[!] httpx failed to produce output"
     fi
+elif [ -x "$HOME/go/bin/httpx" ]; then
+    echo "[*] using $HOME/go/bin/httpx"
+    "$HOME/go/bin/httpx" -u "$TARGET" -H "Cookie: $COOKIE" -title -status-code -tech-detect -server -follow-host-redirects -nc > "$HTTPX_OUT" 2>/dev/null || echo "[!] httpx failed to produce output"
+elif [ -n "${GOPATH:-}" ] && [ -x "$GOPATH/bin/httpx" ]; then
+    echo "[*] using $GOPATH/bin/httpx"
+    "$GOPATH/bin/httpx" -u "$TARGET" -H "Cookie: $COOKIE" -title -status-code -tech-detect -server -follow-host-redirects -nc > "$HTTPX_OUT" 2>/dev/null || echo "[!] httpx failed to produce output"
 else
     echo "[!] httpx not found. Install with: go install github.com/projectdiscovery/httpx/cmd/httpx@latest"
     touch "$HTTPX_OUT"
@@ -128,6 +144,8 @@ else
         touch "$KATANA_OUT"
     fi
 fi
+
+rm -f login_response.html
 
 #################################################
 # DONE
