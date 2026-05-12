@@ -16,7 +16,6 @@ Output Format:
 """
 
 import argparse
-import re
 import time
 import urllib.parse
 from pathlib import Path
@@ -49,12 +48,32 @@ class FormAutoSubmit:
         self.auth_pass = auth_pass
         self.no_auth = no_auth
 
+    def is_login_page(self, html: str, page_url: str = "") -> bool:
+        """Heuristic to detect DVWA login page reliably."""
+        low = html.lower()
+        if "<title>login ::" in low:
+            return True
+        if "name=\"username\"" in low and "name=\"password\"" in low and "login.php" in low:
+            return True
+        if page_url and "login.php" in page_url.lower():
+            return True
+        return False
+
     def fetch_page(self, url: str) -> Optional[str]:
         """Fetch HTML content from URL through proxy."""
         print(f"[*] Fetching: {url}")
         try:
             response = self.session.get(url, timeout=10)
-            return response.text
+            html = response.text
+
+            # If redirected/served login page unexpectedly, attempt re-login once.
+            if not self.no_auth and self.is_login_page(html, str(response.url)):
+                print("[!] Got login page while fetching target. Re-authenticating and retrying once...")
+                if self.perform_login(self.auth_user, self.auth_pass):
+                    retry = self.session.get(url, timeout=10)
+                    return retry.text
+
+            return html
         except Exception as e:
             print(f"[!] Failed to fetch {url}: {e}")
             return None
@@ -129,16 +148,28 @@ class FormAutoSubmit:
                         continue
                     fields[name] = "test content"
 
-                # Detect if this is a login form (has username/password fields)
-                is_login_form = any(
-                    field_name.lower() in ("username", "user", "login", "email", "password", "pass")
+                # Detect if this is a login form or setup form
+                # Skip: (1) action URL contains "login" OR (2) has both username AND password fields
+                # Also skip: (3) action URL contains "setup" or form has "create_db" field
+                action_lower = action.lower()
+                is_login_url = "login" in action_lower or "authenticate" in action_lower
+                is_setup_url = "setup" in action_lower
+                
+                has_username = any(
+                    field_name.lower() in ("username", "user", "email")
                     for field_name in fields.keys()
                 )
                 has_password = any(
                     field_name.lower() in ("password", "pass")
                     for field_name in fields.keys()
                 )
-                is_login_form = is_login_form and has_password
+                has_both = has_username and has_password
+                has_setup_field = any(
+                    field_name.lower() in ("create_db", "setup_db", "initialize")
+                    for field_name in fields.keys()
+                )
+                
+                is_login_form = is_login_url or has_both or is_setup_url or has_setup_field
 
                 forms.append(
                     {
@@ -164,9 +195,23 @@ class FormAutoSubmit:
         page_url = form["page_url"]
         is_login_form = form.get("is_login_form", False)
 
-        # Skip login forms — they were already handled by perform_login()
+        # Skip login/setup forms — they were handled elsewhere
         if is_login_form:
             print(f"    [!] Skipping login form (already authenticated)")
+            print(f"    [DEBUG] Form action: {action}")
+            print(f"    [DEBUG] Form fields: {list(fields.keys())}")
+            # Fetch current page to verify if still showing login or authenticated
+            try:
+                current_page = self.session.get(page_url, timeout=5).text
+                if "logout" in current_page.lower() and not self.is_login_page(current_page, page_url):
+                    print(f"    [DEBUG] ✓ Page shows 'logout' - authenticated confirmed")
+                elif self.is_login_page(current_page, page_url):
+                    print(f"    [DEBUG] ⚠ Page still shows 'login' - login may have failed!")
+                    print(f"    [DEBUG] Page title/snippets: {current_page[200:500]}")
+                else:
+                    print(f"    [DEBUG] Page content (first 300 chars): {current_page[:300]}")
+            except Exception as e:
+                print(f"    [DEBUG] Could not fetch page: {e}")
             return None
 
         print(f"    [+] Submitting {method} form to: {action}")
@@ -211,24 +256,37 @@ class FormAutoSubmit:
         login_url = urljoin(self.base_url + '/', 'login.php')
         print(f"[*] Performing automated login to {login_url} as {username}")
 
+        # Keep DVWA at low security during recon/automation.
+        self.session.cookies.set('security', 'low')
+
         resp = self.session.get(login_url, timeout=10)
         html = resp.text
         soup = BeautifulSoup(html, 'html.parser')
         token_input = soup.find('input', attrs={'name': 'user_token'})
         token = token_input.get('value') if token_input else ''
+        
+        print(f"[DEBUG] Got CSRF token: {token[:20]}..." if token else "[DEBUG] No CSRF token found")
 
         data = {'username': username, 'password': password, 'Login': 'Login'}
         if token:
             data['user_token'] = token
 
-        post = self.session.post(login_url, data=data, timeout=10)
+        post_resp = self.session.post(login_url, data=data, timeout=10, allow_redirects=True)
+        print(f"[DEBUG] Login POST response status: {post_resp.status_code}")
 
-        check = self.session.get(self.base_url + '/', timeout=10).text
-        if 'Logout' in check or 'vulnerabilities' in check:
-            print('[*] Auto-login successful')
+        check_url = urljoin(self.base_url + '/', 'index.php')
+        check_resp = self.session.get(check_url, timeout=10)
+        check = check_resp.text
+
+        # Success requires logout marker and not being on login page.
+        if 'logout' in check.lower() and not self.is_login_page(check, str(check_resp.url)):
+            print('[*] Auto-login successful ✓')
+            print(f"[DEBUG] Auth confirmed at: {check_resp.url}")
             return True
 
-        print('[!] Auto-login did not appear successful')
+        print('[!] Auto-login may have failed ⚠')
+        print(f"[DEBUG] Auth check URL: {check_resp.url}")
+        print(f"[DEBUG] Home page snippet (first 300 chars):\n{check[:300]}")
         return False
 
     def process_url(self, url: str) -> List[str]:
