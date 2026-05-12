@@ -129,6 +129,17 @@ class FormAutoSubmit:
                         continue
                     fields[name] = "test content"
 
+                # Detect if this is a login form (has username/password fields)
+                is_login_form = any(
+                    field_name.lower() in ("username", "user", "login", "email", "password", "pass")
+                    for field_name in fields.keys()
+                )
+                has_password = any(
+                    field_name.lower() in ("password", "pass")
+                    for field_name in fields.keys()
+                )
+                is_login_form = is_login_form and has_password
+
                 forms.append(
                     {
                         "index": form_idx,
@@ -136,6 +147,7 @@ class FormAutoSubmit:
                         "action": action,
                         "fields": fields,
                         "page_url": page_url,
+                        "is_login_form": is_login_form,
                     }
                 )
 
@@ -150,6 +162,12 @@ class FormAutoSubmit:
         action = form["action"]
         fields = form["fields"]
         page_url = form["page_url"]
+        is_login_form = form.get("is_login_form", False)
+
+        # Skip login forms — they were already handled by perform_login()
+        if is_login_form:
+            print(f"    [!] Skipping login form (already authenticated)")
+            return None
 
         print(f"    [+] Submitting {method} form to: {action}")
         print(f"    [+] Fields: {fields}")
