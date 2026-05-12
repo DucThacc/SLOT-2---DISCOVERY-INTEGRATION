@@ -7,6 +7,7 @@ from typing import List
 
 import requests
 import urllib3
+from bs4 import BeautifulSoup
 from pydantic import BaseModel
 from zapv2 import ZAPv2
 
@@ -68,14 +69,70 @@ class ZapCollector:
         "javascript:alert('xss')",
     ]
 
-    def __init__(self, proxy_url="http://127.0.0.1:8080"):
+    def __init__(self, proxy_url="http://127.0.0.1:8080", base_url: str = BASE_URL, auth_user: str = "admin", auth_pass: str = "password", no_auth: bool = False):
 
         print(f"[*] Đang kết nối tới ZAP Proxy tại {proxy_url}...")
 
         self.proxy_url = proxy_url
+        self.base_url = base_url.rstrip("/")
+        self.auth_user = auth_user
+        self.auth_pass = auth_pass
+        self.no_auth = no_auth
+
+        self.session = requests.Session()
+        self.session.proxies.update({"http": proxy_url, "https": proxy_url})
+        self.session.verify = False
 
         self.zap = ZAPv2(proxies={"http": proxy_url, "https": proxy_url})
         self._message_cache = {}
+
+    def is_login_page(self, html: str, page_url: str = "") -> bool:
+
+        low = html.lower()
+        if "<title>login ::" in low:
+            return True
+        if "name=\"username\"" in low and "name=\"password\"" in low and "login.php" in low:
+            return True
+        if page_url and "login.php" in page_url.lower():
+            return True
+        return False
+
+    def perform_login(self, username: str, password: str) -> bool:
+
+        login_url = urllib.parse.urljoin(self.base_url + "/", "login.php")
+        print(f"[*] Auto-login to {login_url} as {username}")
+
+        self.session.cookies.set("security", "low")
+
+        resp = self.session.get(login_url, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        token_input = soup.find("input", attrs={"name": "user_token"})
+        token = token_input.get("value") if token_input else ""
+
+        data = {"username": username, "password": password, "Login": "Login"}
+        if token:
+            data["user_token"] = token
+
+        post_resp = self.session.post(login_url, data=data, timeout=10, allow_redirects=True)
+        print(f"[DEBUG] Login POST response status: {post_resp.status_code}")
+
+        check_url = urllib.parse.urljoin(self.base_url + "/", "index.php")
+        check_resp = self.session.get(check_url, timeout=10)
+        if "logout" in check_resp.text.lower() and not self.is_login_page(check_resp.text, str(check_resp.url)):
+            print("[*] Auto-login successful ✓")
+            return True
+
+        print("[!] Auto-login may have failed ⚠")
+        print(f"[DEBUG] Auth check URL: {check_resp.url}")
+        print(f"[DEBUG] Home page snippet (first 300 chars):\n{check_resp.text[:300]}")
+        return False
+
+    def ensure_authenticated(self):
+
+        if self.no_auth:
+            return
+
+        self.perform_login(self.auth_user, self.auth_pass)
 
     # ======================================
     # ACCESS SINGLE PAGE
@@ -85,11 +142,14 @@ class ZapCollector:
 
         print(f"\n[*] Đang gửi request duy nhất tới: {target_url}")
 
-        proxies = {"http": self.proxy_url, "https": self.proxy_url}
-
         try:
 
-            requests.get(target_url, proxies=proxies, verify=False, timeout=10)
+            response = self.session.get(target_url, timeout=10)
+
+            if not self.no_auth and self.is_login_page(response.text, str(response.url)):
+                print("[!] Target trả về login page, thử login lại rồi request lại...")
+                if self.perform_login(self.auth_user, self.auth_pass):
+                    self.session.get(target_url, timeout=10)
 
             print("[*] Truy cập thành công! ZAP đang xử lý nền...")
 
@@ -102,8 +162,6 @@ class ZapCollector:
     def send_payloads_to_targets(self, target_urls: List[str]):
 
         print("\n[*] Gửi payload để phát hiện High Severity issues...")
-
-        proxies = {"http": self.proxy_url, "https": self.proxy_url}
 
         for target_url in target_urls:
 
@@ -126,7 +184,7 @@ class ZapCollector:
                     )
 
                     try:
-                        requests.get(payload_url, proxies=proxies, verify=False, timeout=10)
+                        self.session.get(payload_url, timeout=10)
                     except Exception:
                         pass
 
@@ -455,6 +513,25 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--auth-user",
+        default="admin",
+        help="Username to use for auto-login (default: admin)",
+    )
+
+    parser.add_argument(
+        "--auth-pass",
+        default="password",
+        help="Password to use for auto-login (default: password)",
+    )
+
+    parser.add_argument(
+        "--no-auth",
+        dest="no_auth",
+        action="store_true",
+        help="Disable automatic login",
+    )
+
+    parser.add_argument(
         "-o",
         "--output-file",
         default=DEFAULT_OUTPUT_FILE,
@@ -465,7 +542,15 @@ if __name__ == "__main__":
 
     try:
 
-        collector = ZapCollector(proxy_url=args.proxy)
+        collector = ZapCollector(
+            proxy_url=args.proxy,
+            base_url=args.base_url,
+            auth_user=args.auth_user,
+            auth_pass=args.auth_pass,
+            no_auth=args.no_auth,
+        )
+
+        collector.ensure_authenticated()
 
         targets = load_targets(args.input_file, args.base_url, args.limit)
 
