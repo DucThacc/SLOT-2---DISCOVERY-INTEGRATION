@@ -212,12 +212,18 @@ class DVWAZapPipeline:
                 action_lower = action.lower()
                 is_login_url = "login" in action_lower or "authenticate" in action_lower
                 is_setup_url = "setup" in action_lower
+                is_logout_url = "logout" in action_lower
+                
                 has_setup_field = any(
                     field_name.lower() in ("create_db", "setup_db", "initialize")
                     for field_name in fields.keys()
                 )
+                has_logout_field = any(
+                    field_name.lower() in ("logout", "log_out", "signout", "sign_out", "btnLogout", "btnSignout")
+                    for field_name in fields.keys()
+                )
 
-                is_skip_form = is_login_url or (has_username and has_password) or is_setup_url or has_setup_field
+                is_skip_form = is_login_url or (has_username and has_password) or is_setup_url or has_setup_field or is_logout_url or has_logout_field
 
                 forms.append(
                     {
@@ -243,7 +249,7 @@ class DVWAZapPipeline:
         skip = form.get("skip", False)
 
         if skip:
-            print(f"    [!] Skipping login/setup form")
+            print(f"    [!] Skipping login/logout/setup form (already authenticated)")
             print(f"    [DEBUG] Form action: {action}")
             print(f"    [DEBUG] Form fields: {list(fields.keys())}")
             return None

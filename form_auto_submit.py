@@ -205,7 +205,7 @@ class FormAutoSubmit:
 
         # Skip login/setup forms — they were handled elsewhere
         if is_login_form:
-            print(f"    [!] Skipping login form (already authenticated)")
+            print(f"    [!] Skipping login/logout/setup form (already authenticated)")
             print(f"    [DEBUG] Form action: {action}")
             print(f"    [DEBUG] Form fields: {list(fields.keys())}")
             # Fetch current page to verify if still showing login or authenticated
