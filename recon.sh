@@ -80,15 +80,24 @@ echo "[+] PHPSESSID: $PHPSESSID"
 
 echo "[+] Verifying authenticated session..."
 
-curl -s -L \
+INDEX_HTML=$(curl -s -L \
 -b cookies.txt \
 -c cookies.txt \
-$TARGET/index.php \
-| grep -Eqi "Logout|logout.php|Change Password|Damn Vulnerable Web Application"
+$TARGET/index.php)
 
-if [ $? -ne 0 ]; then
+echo "$INDEX_HTML" > index_debug.html
+
+if echo "$INDEX_HTML" | grep -Eqi "Login ::|name=\"username\"|name=\"password\"|login.php"; then
     echo "[-] Login failed"
-    echo "[!] Debug: try checking cookie jar and login page manually"
+    echo "[!] Still seeing login page after authentication attempt"
+    echo "[!] Saved response to index_debug.html"
+    exit 1
+fi
+
+if ! echo "$INDEX_HTML" | grep -Eqi "Logout|logout.php|Change Password|Damn Vulnerable Web Application|Welcome"; then
+    echo "[-] Login failed"
+    echo "[!] Auth page did not contain expected DVWA markers"
+    echo "[!] Saved response to index_debug.html"
     exit 1
 fi
 
