@@ -259,6 +259,187 @@ Session này đại diện cho:
 user đã authenticated
 security=low
 
+---
+
+## One-file Pipeline
+
+Từ giờ nên dùng một script duy nhất là [zap_pipeline.py](zap_pipeline.py) để tránh lệch session giữa các bước.
+
+### Pipeline này làm gì
+
+- Tự login DVWA với `admin/password`
+- Load các URL từ `katana.filtered.txt`
+- Truy cập trang để ZAP ghi nhận traffic
+- Tự tìm form và submit form trong cùng session
+- Inject SQLi/XSS payload vào query params
+- Chạy ZAP active scan
+- Ghi kết quả ra JSON
+
+### Chạy trên Kali
+
+```bash
+python3 zap_pipeline.py -i katana.filtered.txt -o zap_output.json
+```
+
+Nếu muốn scan file sau khi form auto submit:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json
+```
+
+Tắt active scan:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json --no-active-scan
+```
+
+Tắt payload injection:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json --no-payload-injection
+```
+
+### Output JSON
+
+File JSON sẽ có thêm:
+
+- `input_count`
+- `submitted_count`
+- `scan_target_count`
+- `submitted_targets`
+- `zap_findings`
+- `reflected_params`
+
+### Ghi chú
+
+- `recon.sh` vẫn dùng để tạo `httpx.txt` và `katana.txt`
+- `form_auto_submit.py` và `use-ZAP.py` là các file cũ theo từng bước, nhưng luồng khuyến nghị hiện tại là `zap_pipeline.py`
+- Nếu chỉ cần một đầu ra `.json`, hãy dùng pipeline mới để tránh lỗi session và giảm số bước thủ công
+
+---
+
+## Quy Trình Chạy Đầy Đủ
+
+Đây là luồng khuyến nghị từ đầu đến cuối trên Kali Linux.
+
+### 1) Khởi động ZAP
+
+Chạy ZAP ở chế độ daemon để `zap_pipeline.py` có thể đi qua proxy local:
+
+```bash
+zaproxy -daemon -port 8080 -host 127.0.0.1 -config api.disablekey=true
+```
+
+Nếu ZAP chạy trên máy khác, đổi `-host` sang `0.0.0.0` hoặc IP máy đó, rồi truyền lại proxy bằng `-p http://HOST:8080` khi chạy script.
+
+### 2) Kiểm tra môi trường Kali
+
+Đảm bảo các tool đã có trong PATH:
+
+```bash
+go version
+httpx --version
+katana --version
+python3 --version
+```
+
+Nếu thiếu `httpx` hoặc `katana`:
+
+```bash
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
+export PATH=$PATH:$HOME/go/bin
+```
+
+### 3) Chạy Recon
+
+Mục tiêu của bước này là tạo ra `httpx.txt` và `katana.txt` từ DVWA đã login:
+
+```bash
+chmod +x recon.sh
+./recon.sh
+```
+
+Kết quả mong đợi:
+
+- `httpx.txt`
+- `katana.txt`
+
+Nếu `recon.sh` báo login fail, kiểm tra file debug:
+
+```bash
+cat index_debug.html
+cat login_response.html
+```
+
+### 4) Chạy pipeline một-file
+
+Luồng khuyến nghị hiện tại là dùng một script duy nhất:
+
+```bash
+python3 zap_pipeline.py -i katana.filtered.txt -o zap_output.json
+```
+
+Script này sẽ làm các bước sau trong cùng một session:
+
+1. Login DVWA với `admin/password`
+2. Load URL từ `katana.filtered.txt`
+3. Gửi request để ZAP ghi nhận traffic
+4. Tìm form và auto-submit form
+5. Inject SQLi/XSS payload vào query params
+6. Chạy ZAP active scan
+7. Xuất kết quả ra JSON
+
+### 5) Dùng file sau form submit nếu cần
+
+Nếu muốn scan riêng các request đã submit form, dùng:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json
+```
+
+### 6) Tùy chọn chạy
+
+Bỏ active scan:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json --no-active-scan
+```
+
+Bỏ payload injection:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json --no-payload-injection
+```
+
+Tắt auto-login nếu muốn tự cung cấp session khác:
+
+```bash
+python3 zap_pipeline.py -i katana_filtered_2.txt -o zap_output.json --no-auth
+```
+
+### 7) Kiểm tra kết quả JSON
+
+Mở file `zap_output.json` và lọc các HIGH:
+
+```bash
+cat zap_output.json | jq '.zap_findings[] | select(.severity=="HIGH")'
+```
+
+### 8) Tóm tắt file đầu ra
+
+- `httpx.txt`: fingerprint, status code, tech detect
+- `katana.txt`: raw crawl output
+- `katana.filtered.txt`: file đã lọc, deduplicate
+- `katana_filtered_2.txt`: form-submit output (nếu dùng bước form auto submit riêng)
+- `zap_output.json`: JSON cuối cùng chứa findings
+
+### 9) Khuyến nghị
+
+- Nếu chỉ cần một file JSON cuối cùng, hãy chạy thẳng `zap_pipeline.py`
+- Nếu cần debug từng bước, hãy chạy `recon.sh` trước rồi mới tới pipeline
+- Không cần dùng riêng `form_auto_submit.py` và `use-ZAP.py` trong luồng chuẩn nữa
+
 DVWA có nhiều mức:
 
 low

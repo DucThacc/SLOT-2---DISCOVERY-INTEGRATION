@@ -169,7 +169,15 @@ class FormAutoSubmit:
                     for field_name in fields.keys()
                 )
                 
-                is_login_form = is_login_url or has_both or is_setup_url or has_setup_field
+                # Detect logout forms (action or field/button names)
+                is_logout_url = "logout" in action_lower
+                has_logout_field = any(
+                    field_name.lower() in ("logout", "log_out", "signout", "sign_out", "btnLogout", "btnSignout")
+                    for field_name in fields.keys()
+                )
+                is_logout_form = is_logout_url or has_logout_field
+
+                is_login_form = is_login_url or has_both or is_setup_url or has_setup_field or is_logout_form
 
                 forms.append(
                     {
