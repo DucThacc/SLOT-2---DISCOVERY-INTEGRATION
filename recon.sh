@@ -70,13 +70,15 @@ echo "[+] PHPSESSID: $PHPSESSID"
 
 echo "[+] Verifying authenticated session..."
 
-curl -s \
--H "Cookie: $COOKIE" \
-$TARGET \
-| grep vulnerabilities > /dev/null
+curl -s -L \
+-b cookies.txt \
+-c cookies.txt \
+$TARGET/index.php \
+| grep -qi "Logout"
 
 if [ $? -ne 0 ]; then
     echo "[-] Login failed"
+    echo "[!] Debug: try checking cookie jar and login page manually"
     exit 1
 fi
 
