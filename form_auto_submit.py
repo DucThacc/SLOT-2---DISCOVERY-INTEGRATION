@@ -37,18 +37,23 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class FormAutoSubmit:
     """Automatically find and submit forms on web pages."""
-
-    def __init__(self, proxy_url: str = PROXY_URL, base_url: str = BASE_URL):
+    def __init__(self, proxy_url: str = PROXY_URL, base_url: str = BASE_URL, auth_user: str = "admin", auth_pass: str = "password", no_auth: bool = False):
         self.proxy_url = proxy_url
         self.base_url = base_url.rstrip("/")
         self.proxies = {"http": proxy_url, "https": proxy_url}
         self.submitted_urls = []
+        self.session = requests.Session()
+        self.session.proxies.update(self.proxies)
+        self.session.verify = False
+        self.auth_user = auth_user
+        self.auth_pass = auth_pass
+        self.no_auth = no_auth
 
     def fetch_page(self, url: str) -> Optional[str]:
         """Fetch HTML content from URL through proxy."""
         print(f"[*] Fetching: {url}")
         try:
-            response = requests.get(url, proxies=self.proxies, verify=False, timeout=10)
+            response = self.session.get(url, timeout=10)
             return response.text
         except Exception as e:
             print(f"[!] Failed to fetch {url}: {e}")
@@ -97,6 +102,12 @@ class FormAutoSubmit:
                     else:
                         # text, email, password, number, etc.
                         fields[name] = "test" if not value else value
+
+                    # detect login forms
+                    # mark if form has username/password fields
+                    # we'll use this later to optionally skip or perform login
+                    # record by setting a special key (not sent)
+                    # handled after collecting all inputs
 
                 # Extract select fields
                 for select in form.find_all("select"):
@@ -148,7 +159,7 @@ class FormAutoSubmit:
                 # For GET, append params to URL
                 query_string = urllib.parse.urlencode(fields)
                 full_url = f"{action}?{query_string}" if query_string else action
-                requests.get(full_url, proxies=self.proxies, verify=False, timeout=10)
+                self.session.get(full_url, timeout=10)
 
                 # Return relative path for katana_filtered_2.txt
                 parsed = urlparse(full_url)
@@ -159,7 +170,7 @@ class FormAutoSubmit:
                 return relative_path
 
             else:  # POST
-                requests.post(action, data=fields, proxies=self.proxies, verify=False, timeout=10)
+                self.session.post(action, data=fields, timeout=10)
 
                 # Return as "POST /path field1=value1&field2=value2"
                 parsed = urlparse(action)
@@ -176,6 +187,31 @@ class FormAutoSubmit:
             print(f"    [!] Failed to submit form: {e}")
 
         return None
+
+    def perform_login(self, username: str, password: str) -> bool:
+        """Attempt login using /login.php, store session cookies."""
+        login_url = urljoin(self.base_url + '/', 'login.php')
+        print(f"[*] Performing automated login to {login_url} as {username}")
+
+        resp = self.session.get(login_url, timeout=10)
+        html = resp.text
+        soup = BeautifulSoup(html, 'html.parser')
+        token_input = soup.find('input', attrs={'name': 'user_token'})
+        token = token_input.get('value') if token_input else ''
+
+        data = {'username': username, 'password': password, 'Login': 'Login'}
+        if token:
+            data['user_token'] = token
+
+        post = self.session.post(login_url, data=data, timeout=10)
+
+        check = self.session.get(self.base_url + '/', timeout=10).text
+        if 'Logout' in check or 'vulnerabilities' in check:
+            print('[*] Auto-login successful')
+            return True
+
+        print('[!] Auto-login did not appear successful')
+        return False
 
     def process_url(self, url: str) -> List[str]:
         """Process single URL: find and submit all forms."""
@@ -223,6 +259,13 @@ class FormAutoSubmit:
                 urls.append(line)
 
         print(f"[*] Loaded {len(urls)} URLs from {input_file}")
+
+        # perform authenticated login if not disabled
+        if not self.no_auth and self.auth_user and self.auth_pass:
+            try:
+                self.perform_login(self.auth_user, self.auth_pass)
+            except Exception:
+                print("[!] Auto-login failed; continuing without auth")
 
         # Process each URL
         all_captured = []
@@ -278,10 +321,29 @@ def main():
         help="ZAP Proxy URL (default: http://127.0.0.1:8080)",
     )
 
+    parser.add_argument(
+        "--auth-user",
+        default="admin",
+        help="Username to use for auto-login (default: admin)",
+    )
+
+    parser.add_argument(
+        "--auth-pass",
+        default="password",
+        help="Password to use for auto-login (default: password)",
+    )
+
+    parser.add_argument(
+        "--no-auth",
+        dest="no_auth",
+        action="store_true",
+        help="Disable automatic login (default: login as admin/password)",
+    )
+
     args = parser.parse_args()
 
     try:
-        processor = FormAutoSubmit(proxy_url=args.proxy, base_url=args.base_url)
+        processor = FormAutoSubmit(proxy_url=args.proxy, base_url=args.base_url, auth_user=args.auth_user, auth_pass=args.auth_pass, no_auth=args.no_auth)
         processor.process_all(args.input_file, args.output_file)
         print("\n[+] Success! Next step: python3 use-ZAP.py -i katana_filtered_2.txt")
 

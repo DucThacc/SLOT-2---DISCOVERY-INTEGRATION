@@ -87,32 +87,45 @@ echo "[+] Authenticated successfully"
 #################################################
 
 echo "[+] Running httpx..."
+# Try multiple httpx invocation styles for compatibility across distributions
+if command -v httpx >/dev/null 2>&1; then
+    echo "[*] httpx found: $(httpx --version 2>/dev/null || true)"
 
-httpx \
--u $TARGET \
--H "Cookie: $COOKIE" \
--title \
--status-code \
--tech-detect \
--server \
--follow-host-redirects \
--nc \
-> $HTTPX_OUT
+    # Try -u style first, fall back to positional URL style
+    if httpx -u "$TARGET" -H "Cookie: $COOKIE" -title -status-code -tech-detect -server -follow-host-redirects -nc > "$HTTPX_OUT" 2>/dev/null; then
+        :
+    elif httpx "$TARGET" -H "Cookie: $COOKIE" -title -status-code -tech-detect -server -follow-host-redirects -nc > "$HTTPX_OUT" 2>/dev/null; then
+        :
+    else
+        # Last-resort: basic httpx invocation
+        httpx -title -status-code -H "Cookie: $COOKIE" "$TARGET" > "$HTTPX_OUT" 2>/dev/null || echo "[!] httpx failed to produce output"
+    fi
+else
+    echo "[!] httpx not found. Install with: go install github.com/projectdiscovery/httpx/cmd/httpx@latest"
+    touch "$HTTPX_OUT"
+fi
 
 #################################################
 # KATANA
 #################################################
 
 echo "[+] Running katana..."
-
-katana \
--u $TARGET \
--H "Cookie: $COOKIE" \
--jc \
--d 3 \
--kf all \
--nc \
-> $KATANA_OUT
+if command -v katana >/dev/null 2>&1; then
+    echo "[*] katana found: $(katana --version 2>/dev/null || true)"
+    katana -u "$TARGET" -H "Cookie: $COOKIE" -jc -d 3 -kf all -nc > "$KATANA_OUT" 2>/dev/null || echo "[!] katana execution failed"
+else
+    # Try common GOPATH locations
+    if [ -x "$HOME/go/bin/katana" ]; then
+        echo "[*] using $HOME/go/bin/katana"
+        "$HOME/go/bin/katana" -u "$TARGET" -H "Cookie: $COOKIE" -jc -d 3 -kf all -nc > "$KATANA_OUT" 2>/dev/null || echo "[!] katana execution failed"
+    elif [ -n "$GOPATH" ] && [ -x "$GOPATH/bin/katana" ]; then
+        echo "[*] using $GOPATH/bin/katana"
+        "$GOPATH/bin/katana" -u "$TARGET" -H "Cookie: $COOKIE" -jc -d 3 -kf all -nc > "$KATANA_OUT" 2>/dev/null || echo "[!] katana execution failed"
+    else
+        echo "[!] katana not found. Install with: go install github.com/projectdiscovery/katana/cmd/katana@latest"
+        touch "$KATANA_OUT"
+    fi
+fi
 
 #################################################
 # DONE
