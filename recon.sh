@@ -6,12 +6,12 @@ set -u
 # CONFIG
 #################################################
 
-TARGET="http://192.168.144.155:3000"
-USER="admin"
-PASS="password"
+TARGET="${1:-${TARGET:-http://192.168.144.155:3000}}"
+USER="${2:-${USER:-admin}}"
+PASS="${3:-${PASS:-password}}"
 
-HTTPX_OUT="httpx.txt"
-KATANA_OUT="katana.txt"
+HTTPX_OUT="${HTTPX_OUT:-httpx.txt}"
+KATANA_OUT="${KATANA_OUT:-katana.txt}"
 
 #################################################
 # CLEAN OLD FILES

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""
-Aggressive filter for katana.txt - Keep only core vulnerability endpoints
-"""
+"""Aggressive filter for katana.txt - Keep only core vulnerability endpoints."""
 
-def filter_minimal(input_file="katana.txt", output_file="katana.minimal.txt"):
+import argparse
+
+
+def filter_minimal(input_file="katana.txt", output_file="katana.minimal.txt", base_url="http://192.168.144.155:3000", only_xss_sql=False):
     """
     Keep ONLY the core vulnerability endpoints:
     - /vulnerabilities/* (exclude view_help, view_source)
@@ -21,6 +22,9 @@ def filter_minimal(input_file="katana.txt", output_file="katana.minimal.txt"):
     
     print(f"[*] Reading {input_file}...")
     
+    # Strip trailing slash from base_url for consistent processing
+    base_url = base_url.rstrip("/")
+    
     with open(input_file, 'r', encoding='utf-8') as f:
         lines = [line.strip() for line in f.readlines()]
     
@@ -29,7 +33,7 @@ def filter_minimal(input_file="katana.txt", output_file="katana.minimal.txt"):
     filtered = []
     
     for line in lines:
-        if not line or not line.startswith('http://192.168.144.155:3000'):
+        if not line or not line.startswith(base_url):
             continue
         
         # Skip static files
@@ -57,10 +61,12 @@ def filter_minimal(input_file="katana.txt", output_file="katana.minimal.txt"):
             continue
         
         # Keep ONLY:
-        # - /vulnerabilities/* endpoints
-        # - /phpinfo.php
-        # - /login.php
-        if any(x in line for x in ['/vulnerabilities/', '/phpinfo.php', '/login.php']):
+        if only_xss_sql:
+            allowed_endpoints = ['/vulnerabilities/sqli', '/vulnerabilities/xss', '/login.php']
+        else:
+            allowed_endpoints = ['/vulnerabilities/', '/phpinfo.php', '/login.php']
+
+        if any(x in line for x in allowed_endpoints):
             filtered.append(line)
     
     # Deduplicate
@@ -76,8 +82,14 @@ def filter_minimal(input_file="katana.txt", output_file="katana.minimal.txt"):
     print("[+] URLs:")
     for url in unique:
         # Extract just the path for readability
-        path = url.replace('http://192.168.144.155:3000', '')
+        path = url.replace(base_url, '')
         print(f"    {path}")
 
 if __name__ == "__main__":
-    filter_minimal()
+    parser = argparse.ArgumentParser(description="Filter katana output to minimal DVWA URLs")
+    parser.add_argument("-i", "--input", default="katana.txt", help="Input file from katana")
+    parser.add_argument("-o", "--output", default="katana.minimal.txt", help="Output filtered file")
+    parser.add_argument("-b", "--base-url", default="http://192.168.144.155:3000", help="Base URL of target application")
+    parser.add_argument("--only-xss-sql", action="store_true", help="Only keep XSS and SQLi vulnerabilities")
+    args = parser.parse_args()
+    filter_minimal(args.input, args.output, args.base_url, args.only_xss_sql)

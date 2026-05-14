@@ -1,0 +1,47 @@
+{
+	"schema_version": "1.0",
+	"target": "https://phimmoichillv2.vercel.app/",
+	"zap_findings_count": 1,
+	"zap_findings": [
+		{
+			"endpoint": "https://phimmoichillv2.vercel.app/",
+			"method": "GET",
+			"param": "x-frame-options",
+			"finding_type": "Missing Anti-clickjacking Header",
+			"severity": "MEDIUM",
+			"confidence": "Medium",
+			"payload": "",
+			"raw_request": "",
+			"raw_response": ""
+		}
+	],
+	"reflected_params_count": 0,
+	"reflected_params": [],
+	"idor_findings_count": 1,
+	"idor_findings": [
+		{
+			"compact_summary": {
+				"endpoint": "/profile?id=",
+				"status": "confirmed",
+				"confidence": "high",
+				"reason": "cross-session unauthorized object access"
+			},
+			"full_verification": {
+				"authenticated_as": "userA",
+				"requested_id": 2,
+				"object_owner": "userB",
+				"returned_identity": "userB",
+				"access_result": "success",
+				"normalized_hash": "abc123",
+				"response_similarity": 0.95,
+				"authorization_bypass_type": "horizontal"
+			},
+			"supporting_signals": {
+				"status_codes": [200, 200],
+				"content_lengths": [512, 518],
+				"normalized_hashes": ["a1b2c3", "d4e5f6"],
+				"extracted_identifiers": ["userB", "userB"]
+			}
+		}
+	]
+}
