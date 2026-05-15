@@ -112,8 +112,9 @@ def main():
     print("[*] Đang khởi chạy idor_exploit.py...\n")
     
     # Xây dựng command line
+    # Sửa từ python3 sang python để tương thích với Windows của bạn
     cmd = [
-        "python3", "idor_exploit.py",
+        "python", "idor_exploit.py",
         "-t", args.target,
         "-u", args.urls,
         "--session-cookie", f"{args.user1}={cookie1}",

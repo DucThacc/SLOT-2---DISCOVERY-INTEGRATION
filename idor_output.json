@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "target": "http://192.168.186.128:3001",
+  "idor_findings_count": 1,
+  "idor_findings": [
+    {
+      "compact_summary": {
+        "endpoint": "/WebGoat/start.mvc?username=",
+        "status": "candidate",
+        "confidence": "medium",
+        "reason": "id parameter present; needs multi-session verification"
+      },
+      "full_verification": {
+        "authenticated_as": "ducthanh1",
+        "requested_id": 1,
+        "object_owner": "ducthanh1",
+        "returned_identity": "ducthanh1",
+        "access_result": "success",
+        "normalized_hash": "fab8e89380561156080dca678518d98d0aa35e2fefb3abd136cdff21d8c55675",
+        "response_similarity": 1.0,
+        "clean_diff": "[User:]\n  Session 1 -> ducthanh1\n  Session 2 -> ducthanh2",
+        "authorization_bypass_type": "unknown"
+      },
+      "supporting_signals": {
+        "status_codes": [
+          200,
+          200
+        ],
+        "content_lengths": [
+          2324,
+          2324
+        ],
+        "normalized_hashes": [
+          "fab8e89380561156080dca678518d98d0aa35e2fefb3abd136cdff21d8c55675",
+          "09a8b70a6bca120ffbb50f969233b652b774b58c085618ece0fee6ac4a22c037"
+        ],
+        "extracted_identifiers": [
+          "ducthanh1",
+          "ducthanh2"
+        ]
+      },
+      "evidence": [
+        {
+          "authenticated_as": "ducthanh1",
+          "requested_id": 1,
+          "returned_identity": "ducthanh1",
+          "access_result": "success"
+        },
+        {
+          "authenticated_as": "ducthanh2",
+          "requested_id": 1,
+          "returned_identity": "ducthanh2",
+          "access_result": "success"
+        }
+      ]
+    }
+  ]
+}

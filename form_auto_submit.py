@@ -1,187 +1,394 @@
-#!/usr/bin/env python3
 """
-Form Auto-Submit Tool
-======================
-Purpose: 
-  1. Read URLs from katana_filtered.txt
-  2. For each URL, fetch HTML and find all forms
-  3. Auto-fill form fields with test values
-  4. Auto-submit forms through ZAP proxy
-  5. Capture submitted form URLs (GET) or form actions (POST)
-  6. Output to katana_filtered_2.txt for next stage (ZAP scanning)
+Safer Form Auto Submitter
+=========================
 
-Output Format:
-  - GET forms: /path?param1=value1&param2=value2
-  - POST forms: POST /path param1=value1&param2=value2
+Features:
+- Reads URLs from katana output
+- Fetches pages through ZAP proxy
+- Finds forms
+- Auto-fills fields
+- Auto-submits forms safely
+- Captures resulting endpoints
+- Avoids dangerous URLs/forms/actions
+- Supports:
+    - auto login
+    - SID reuse
+    - raw cookies
+- Avoids:
+    - logout
+    - reset
+    - delete
+    - destructive submit buttons
+- Avoids submitting multiple submit buttons simultaneously
 """
 
 import argparse
 import time
 import urllib.parse
+
 from pathlib import Path
 from typing import List, Optional, Dict
-from urllib.parse import urljoin, urlparse
+from urllib.parse import (
+    urljoin,
+    urlparse,
+)
 
 import requests
 import urllib3
-from bs4 import BeautifulSoup
 
-BASE_URL = "http://192.168.144.155:3000"
-DEFAULT_INPUT_FILE = "katana.filtered.txt"
-DEFAULT_OUTPUT_FILE = "katana_filtered_2.txt"
-PROXY_URL = "http://127.0.0.1:8080"
+from bs4 import BeautifulSoup
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+BASE_URL = "http://192.168.153.200/DVWA"
+
+DEFAULT_INPUT_FILE = "katana.filtered.txt"
+DEFAULT_OUTPUT_FILE = "katana_filtered_2.txt"
+
+PROXY_URL = "http://192.168.153.130:8080"
+
+SAFE_USER_AGENT = (
+    "Mozilla/5.0 "
+    "(Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 "
+    "(KHTML, like Gecko) "
+    "Chrome/136.0.0.0 Safari/537.36"
+)
+
 
 class FormAutoSubmit:
-    """Automatically find and submit forms on web pages."""
-    def __init__(self, proxy_url: str = PROXY_URL, base_url: str = BASE_URL, auth_user: str = "admin", auth_pass: str = "password", no_auth: bool = False):
+
+    def __init__(
+        self,
+        proxy_url: str = PROXY_URL,
+        base_url: str = BASE_URL,
+        auth_user: str = "admin",
+        auth_pass: str = "password",
+        no_auth: bool = False,
+        sid: str = None,
+        cookie: str = None,
+    ):
+
         self.proxy_url = proxy_url
         self.base_url = base_url.rstrip("/")
-        self.proxies = {"http": proxy_url, "https": proxy_url}
-        self.submitted_urls = []
+
         self.session = requests.Session()
-        self.session.proxies.update(self.proxies)
+
+        # proxy
+        if proxy_url:
+            self.session.proxies.update(
+                {
+                    "http": proxy_url,
+                    "https": proxy_url,
+                }
+            )
+
         self.session.verify = False
+
+        self.session.headers.update(
+            {
+                "User-Agent": SAFE_USER_AGENT,
+            }
+        )
+
         self.auth_user = auth_user
         self.auth_pass = auth_pass
+
         self.no_auth = no_auth
 
+        # dangerous keywords
+        self.dangerous_keywords = (
+            "logout",
+            "signout",
+            "reset",
+            "destroy",
+            "delete",
+            "remove",
+            "drop",
+            "truncate",
+            "setup",
+            "install",
+            "uninstall",
+            "clear",
+            "erase",
+            "shutdown",
+        )
+
+        # dangerous button values
+        self.dangerous_button_keywords = (
+            "logout",
+            "reset",
+            "delete",
+            "remove",
+            "clear",
+            "erase",
+            "drop",
+            "destroy",
+            "cancel",
+        )
+
+        # SID
+        if sid:
+
+            print(f"[*] Using provided PHPSESSID")
+
+            parsed = urlparse(self.base_url)
+
+            domain = parsed.hostname
+
+            self.session.cookies.set("PHPSESSID", sid, domain=domain, path="/")
+
+            self.session.cookies.set("security", "low", domain=domain, path="/")
+
+            self.no_auth = True
+
+        # raw cookie
+        if cookie:
+
+            print("[*] Using provided cookies")
+
+            try:
+
+                for part in cookie.split(";"):
+
+                    part = part.strip()
+
+                    if "=" not in part:
+                        continue
+
+                    key, value = part.split("=", 1)
+
+                    self.session.cookies.set(
+                        key.strip(),
+                        value.strip(),
+                    )
+
+                self.no_auth = True
+
+            except Exception as e:
+                print(f"[!] Cookie parse failed: {e}")
+
+    # =========================================================
+    # safety helpers
+    # =========================================================
+
+    def is_dangerous_url(self, url: str) -> bool:
+
+        low = url.lower()
+
+        return any(k in low for k in self.dangerous_keywords)
+
+    def is_dangerous_button(self, value: str) -> bool:
+
+        low = value.lower()
+
+        return any(k in low for k in self.dangerous_button_keywords)
+
+    # =========================================================
+    # auth detection
+    # =========================================================
+
     def is_login_page(self, html: str, page_url: str = "") -> bool:
-        """Heuristic to detect DVWA login page reliably."""
+
         low = html.lower()
+
         if "<title>login ::" in low:
             return True
-        if "name=\"username\"" in low and "name=\"password\"" in low and "login.php" in low:
+
+        if 'name="username"' in low and 'name="password"' in low:
             return True
+
         if page_url and "login.php" in page_url.lower():
             return True
+
         return False
 
+    # =========================================================
+    # fetch page
+    # =========================================================
+
     def fetch_page(self, url: str) -> Optional[str]:
-        """Fetch HTML content from URL through proxy."""
+
         print(f"[*] Fetching: {url}")
+
         try:
-            response = self.session.get(url, timeout=10)
+
+            print("[DEBUG] Cookies:")
+            print(self.session.cookies.get_dict())
+
+            response = self.session.get(url, timeout=10, allow_redirects=True)
+
+            print("[DEBUG] Request headers:")
+            print(response.request.headers)
+
             html = response.text
 
-            # If redirected/served login page unexpectedly, attempt re-login once.
-            if not self.no_auth and self.is_login_page(html, str(response.url)):
-                print("[!] Got login page while fetching target. Re-authenticating and retrying once...")
-                if self.perform_login(self.auth_user, self.auth_pass):
-                    retry = self.session.get(url, timeout=10)
-                    return retry.text
+            if self.is_login_page(html, str(response.url)):
+
+                if not self.no_auth:
+
+                    print("[!] Login page detected. " "Re-authenticating...")
+
+                    if self.perform_login(self.auth_user, self.auth_pass):
+
+                        retry = self.session.get(url, timeout=10)
+
+                        return retry.text
+
+                else:
+
+                    print("[!] Session appears " "unauthenticated")
+
+                    print(f"[DEBUG] Redirected to: " f"{response.url}")
 
             return html
+
         except Exception as e:
-            print(f"[!] Failed to fetch {url}: {e}")
+
+            print(f"[!] Fetch failed: {e}")
+
             return None
 
+    # =========================================================
+    # find forms
+    # =========================================================
+
     def find_forms(self, html: str, page_url: str) -> List[Dict]:
-        """Parse HTML and extract form information."""
+
         forms = []
+
         try:
+
             soup = BeautifulSoup(html, "html.parser")
+
             form_tags = soup.find_all("form")
 
             for form_idx, form in enumerate(form_tags):
+
                 method = form.get("method", "GET").upper()
+
                 action = form.get("action", page_url)
 
-                # Handle relative URLs
+                # normalize action
                 if action.startswith("/"):
+
                     action = urljoin(self.base_url, action)
+
                 elif not action.startswith("http"):
+
                     action = urljoin(page_url, action)
+
+                # skip dangerous actions
+                if self.is_dangerous_url(action):
+
+                    print(f"[!] Skipping dangerous form action: " f"{action}")
+
+                    continue
 
                 fields = {}
 
-                # Extract all input fields
+                submit_added = False
+
+                # inputs
                 for inp in form.find_all("input"):
+
                     name = inp.get("name")
+
                     if not name:
                         continue
 
                     input_type = inp.get("type", "text").lower()
+
                     value = inp.get("value", "")
 
+                    # hidden
                     if input_type == "hidden":
-                        # Use hidden field value as-is
+
                         fields[name] = value
+
+                    # checkbox
                     elif input_type == "checkbox":
-                        # Check checkbox by default
+
                         fields[name] = "on"
+
+                    # radio
                     elif input_type == "radio":
-                        # Select first radio option
-                        fields[name] = value or "option1"
+
+                        if name not in fields:
+                            fields[name] = value or "option1"
+
+                    # file
                     elif input_type == "file":
-                        # Use dummy filename
-                        fields[name] = "test.txt"
+
+                        continue
+
+                    # submit/button
+                    elif input_type in (
+                        "submit",
+                        "button",
+                    ):
+
+                        if submit_added:
+                            continue
+
+                        if value and self.is_dangerous_button(value):
+
+                            print(f"[!] Skipping dangerous " f"button: {value}")
+
+                            continue
+
+                        submit_added = True
+
+                        fields[name] = value if value else "submit"
+
+                    # normal fields
                     else:
-                        # text, email, password, number, etc.
-                        fields[name] = "test" if not value else value
 
-                    # detect login forms
-                    # mark if form has username/password fields
-                    # we'll use this later to optionally skip or perform login
-                    # record by setting a special key (not sent)
-                    # handled after collecting all inputs
+                        if value:
+                            fields[name] = value
+                        else:
+                            fields[name] = "test"
 
-                # Extract select fields
+                # select
                 for select in form.find_all("select"):
+
                     name = select.get("name")
+
                     if not name:
                         continue
 
                     options = select.find_all("option")
-                    if options:
-                        # Use first option value
-                        fields[name] = options[0].get("value", options[0].get_text().strip())
-                    else:
-                        fields[name] = "option1"
 
-                # Extract textarea fields
+                    if options:
+
+                        fields[name] = options[0].get(
+                            "value", options[0].get_text().strip()
+                        )
+
+                # textarea
                 for textarea in form.find_all("textarea"):
+
                     name = textarea.get("name")
+
                     if not name:
                         continue
+
                     fields[name] = "test content"
 
-                # Detect if this is a login form or setup form
-                # Skip: (1) action URL contains "login" OR (2) has both username AND password fields
-                # Also skip: (3) action URL contains "setup" or form has "create_db" field
+                # detect login/setup forms
                 action_lower = action.lower()
-                is_login_url = "login" in action_lower or "authenticate" in action_lower
-                is_setup_url = "setup" in action_lower
-                
-                has_username = any(
-                    field_name.lower() in ("username", "user", "email")
-                    for field_name in fields.keys()
-                )
-                has_password = any(
-                    field_name.lower() in ("password", "pass")
-                    for field_name in fields.keys()
-                )
-                has_both = has_username and has_password
-                has_setup_field = any(
-                    field_name.lower() in ("create_db", "setup_db", "initialize")
-                    for field_name in fields.keys()
-                )
-                
-                # Detect logout forms (action or field/button names)
-                is_logout_url = "logout" in action_lower
-                has_logout_field = any(
-                    field_name.lower() in ("logout", "log_out", "signout", "sign_out", "btnLogout", "btnSignout")
-                    for field_name in fields.keys()
-                )
-                is_logout_form = is_logout_url or has_logout_field
 
-                is_login_form = is_login_url or has_both or is_setup_url or has_setup_field or is_logout_form
+                is_login_form = any(
+                    k in action_lower
+                    for k in (
+                        "login",
+                        "authenticate",
+                        "setup",
+                    )
+                )
 
                 forms.append(
                     {
-                        "index": form_idx,
                         "method": method,
                         "action": action,
                         "fields": fields,
@@ -191,248 +398,320 @@ class FormAutoSubmit:
                 )
 
         except Exception as e:
-            print(f"[!] Error parsing HTML: {e}")
+
+            print(f"[!] Form parse error: {e}")
 
         return forms
 
-    def submit_form(self, form: Dict) -> Optional[str]:
-        """Submit form and return captured request URL."""
-        method = form["method"]
-        action = form["action"]
-        fields = form["fields"]
-        page_url = form["page_url"]
-        is_login_form = form.get("is_login_form", False)
+    # =========================================================
+    # submit form
+    # =========================================================
 
-        # Skip login/setup forms — they were handled elsewhere
+    def submit_form(self, form: Dict) -> Optional[str]:
+
+        method = form["method"]
+
+        action = form["action"]
+
+        fields = form["fields"]
+
+        is_login_form = form["is_login_form"]
+
         if is_login_form:
-            print(f"    [!] Skipping login/logout/setup form (already authenticated)")
-            print(f"    [DEBUG] Form action: {action}")
-            print(f"    [DEBUG] Form fields: {list(fields.keys())}")
-            # Fetch current page to verify if still showing login or authenticated
-            try:
-                current_page = self.session.get(page_url, timeout=5).text
-                if "logout" in current_page.lower() and not self.is_login_page(current_page, page_url):
-                    print(f"    [DEBUG] ✓ Page shows 'logout' - authenticated confirmed")
-                elif self.is_login_page(current_page, page_url):
-                    print(f"    [DEBUG] ⚠ Page still shows 'login' - login may have failed!")
-                    print(f"    [DEBUG] Page title/snippets: {current_page[200:500]}")
-                else:
-                    print(f"    [DEBUG] Page content (first 300 chars): {current_page[:300]}")
-            except Exception as e:
-                print(f"    [DEBUG] Could not fetch page: {e}")
+
+            print("[!] Skipping login/setup form")
+
             return None
 
-        print(f"    [+] Submitting {method} form to: {action}")
+        print(f"    [+] Submitting " f"{method} -> {action}")
+
         print(f"    [+] Fields: {fields}")
 
         try:
+
+            # GET
             if method == "GET":
-                # For GET, append params to URL
-                query_string = urllib.parse.urlencode(fields)
-                full_url = f"{action}?{query_string}" if query_string else action
+
+                query = urllib.parse.urlencode(fields)
+
+                full_url = f"{action}?{query}" if query else action
+
                 self.session.get(full_url, timeout=10)
 
-                # Return relative path for katana_filtered_2.txt
                 parsed = urlparse(full_url)
-                relative_path = parsed.path
-                if parsed.query:
-                    relative_path += f"?{parsed.query}"
-                print(f"    [✓] Captured GET: {relative_path}")
-                return relative_path
 
-            else:  # POST
+                result = parsed.path
+
+                if parsed.query:
+                    result += f"?{parsed.query}"
+
+                print(f"    [✓] Captured GET: " f"{result}")
+
+                return result
+
+            # POST
+            else:
+
                 self.session.post(action, data=fields, timeout=10)
 
-                # Return as "POST /path field1=value1&field2=value2"
                 parsed = urlparse(action)
-                relative_path = parsed.path
-                query_string = urllib.parse.urlencode(fields)
 
-                result = f"POST {relative_path}"
-                if query_string:
-                    result += f" {query_string}"
-                print(f"    [✓] Captured POST: {result}")
+                result = f"POST {parsed.path}"
+
+                query = urllib.parse.urlencode(fields)
+
+                if query:
+                    result += f" {query}"
+
+                print(f"    [✓] Captured POST: " f"{result}")
+
                 return result
 
         except Exception as e:
-            print(f"    [!] Failed to submit form: {e}")
+
+            print(f"    [!] Submit failed: {e}")
 
         return None
 
-    def perform_login(self, username: str, password: str) -> bool:
-        """Attempt login using /login.php, store session cookies."""
-        login_url = urljoin(self.base_url + '/', 'login.php')
-        print(f"[*] Performing automated login to {login_url} as {username}")
+    # =========================================================
+    # login
+    # =========================================================
 
-        # Keep DVWA at low security during recon/automation.
-        self.session.cookies.set('security', 'low')
+    def perform_login(self, username: str, password: str) -> bool:
+
+        login_url = urljoin(self.base_url + "/", "login.php")
+
+        print(f"[*] Logging in: {login_url}")
+
+        self.session.cookies.set("security", "low")
 
         resp = self.session.get(login_url, timeout=10)
-        html = resp.text
-        soup = BeautifulSoup(html, 'html.parser')
-        token_input = soup.find('input', attrs={'name': 'user_token'})
-        token = token_input.get('value') if token_input else ''
-        
-        print(f"[DEBUG] Got CSRF token: {token[:20]}..." if token else "[DEBUG] No CSRF token found")
 
-        data = {'username': username, 'password': password, 'Login': 'Login'}
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        token_input = soup.find("input", attrs={"name": "user_token"})
+
+        token = token_input.get("value") if token_input else ""
+
+        data = {
+            "username": username,
+            "password": password,
+            "Login": "Login",
+        }
+
         if token:
-            data['user_token'] = token
+            data["user_token"] = token
 
-        post_resp = self.session.post(login_url, data=data, timeout=10, allow_redirects=True)
-        print(f"[DEBUG] Login POST response status: {post_resp.status_code}")
+        self.session.post(login_url, data=data, timeout=10, allow_redirects=True)
 
-        check_url = urljoin(self.base_url + '/', 'index.php')
-        check_resp = self.session.get(check_url, timeout=10)
-        check = check_resp.text
+        check = self.session.get(urljoin(self.base_url + "/", "index.php"), timeout=10)
 
-        # Success requires logout marker and not being on login page.
-        if 'logout' in check.lower() and not self.is_login_page(check, str(check_resp.url)):
-            print('[*] Auto-login successful ✓')
-            print(f"[DEBUG] Auth confirmed at: {check_resp.url}")
+        if "logout" in check.text.lower():
+
+            print("[*] Login success")
+
             return True
 
-        print('[!] Auto-login may have failed ⚠')
-        print(f"[DEBUG] Auth check URL: {check_resp.url}")
-        print(f"[DEBUG] Home page snippet (first 300 chars):\n{check[:300]}")
+        print("[!] Login failed")
+
         return False
 
+    # =========================================================
+    # process url
+    # =========================================================
+
     def process_url(self, url: str) -> List[str]:
-        """Process single URL: find and submit all forms."""
+
         captured = []
 
-        # Construct full URL
+        # full URL
         if not url.startswith("http"):
-            full_url = f"{self.base_url}{url}" if url.startswith("/") else f"{self.base_url}/{url}"
+
+            if url.startswith("/"):
+
+                full_url = self.base_url + url
+
+            else:
+
+                full_url = self.base_url + "/" + url
+
         else:
+
             full_url = url
+
+        # skip dangerous URL
+        if self.is_dangerous_url(full_url):
+
+            print(f"[!] Skipping dangerous URL: " f"{full_url}")
+
+            return captured
 
         print(f"\n[*] Processing: {full_url}")
 
-        # Fetch HTML
         html = self.fetch_page(full_url)
+
         if not html:
             return captured
 
-        # Find forms
         forms = self.find_forms(html, full_url)
-        print(f"[*] Found {len(forms)} form(s) on page")
 
-        # Submit each form
-        for form_idx, form in enumerate(forms, start=1):
-            print(f"[*] Form {form_idx}/{len(forms)}:")
+        print(f"[*] Found {len(forms)} form(s)")
+
+        for idx, form in enumerate(forms, start=1):
+
+            print(f"[*] Form {idx}/{len(forms)}")
+
             result = self.submit_form(form)
+
             if result:
                 captured.append(result)
-            time.sleep(0.5)  # Brief pause between submissions
+
+            time.sleep(0.3)
 
         return captured
 
+    # =========================================================
+    # process all
+    # =========================================================
+
     def process_all(self, input_file: str, output_file: str):
-        """Process all URLs from input file."""
+
         input_path = Path(input_file)
 
         if not input_path.exists():
-            raise FileNotFoundError(f"Input file not found: {input_file}")
 
-        # Read input URLs
+            raise FileNotFoundError(f"Input file not found: " f"{input_file}")
+
         urls = []
-        for line in input_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+
+        for line in input_path.read_text(
+            encoding="utf-8", errors="ignore"
+        ).splitlines():
+
             line = line.strip()
-            if line and not line.startswith("#"):
-                urls.append(line)
 
-        print(f"[*] Loaded {len(urls)} URLs from {input_file}")
+            if not line:
+                continue
 
-        # perform authenticated login if not disabled
+            if line.startswith("#"):
+                continue
+
+            if self.is_dangerous_url(line):
+
+                print(f"[!] Skipping dangerous " f"input URL: {line}")
+
+                continue
+
+            urls.append(line)
+
+        print(f"[*] Loaded {len(urls)} safe URLs")
+
+        # auto login
         if not self.no_auth and self.auth_user and self.auth_pass:
-            try:
-                self.perform_login(self.auth_user, self.auth_pass)
-            except Exception:
-                print("[!] Auto-login failed; continuing without auth")
 
-        # Process each URL
+            self.perform_login(self.auth_user, self.auth_pass)
+
         all_captured = []
+
         for idx, url in enumerate(urls, start=1):
-            print(f"\n{'='*60}")
-            print(f"[*] [{idx}/{len(urls)}] Processing URL")
-            print(f"{'='*60}")
 
-            captured = self.process_url(url)
-            all_captured.extend(captured)
-            time.sleep(1)  # Pause between URLs
+            print("\n" + "=" * 60)
 
-        # Write output
-        output_path = Path(output_file)
-        output_text = "\n".join(all_captured)
-        output_path.write_text(output_text + "\n", encoding="utf-8")
+            print(f"[*] [{idx}/{len(urls)}] " f"Processing URL")
 
-        print(f"\n{'='*60}")
-        print(f"[+] Completed! Wrote {len(all_captured)} submitted URLs to: {output_file}")
-        print(f"{'='*60}")
+            print("=" * 60)
+
+            result = self.process_url(url)
+
+            all_captured.extend(result)
+
+            time.sleep(0.5)
+
+        Path(output_file).write_text("\n".join(all_captured) + "\n", encoding="utf-8")
+
+        print("\n" + "=" * 60)
+
+        print(f"[+] Completed. " f"Captured {len(all_captured)} " f"requests.")
+
+        print(f"[+] Output written to: " f"{output_file}")
+
+        print("=" * 60)
+
+
+# =============================================================
+# main
+# =============================================================
 
 
 def main():
+
     parser = argparse.ArgumentParser(
-        description="Auto-submit forms and capture request URLs for ZAP scanning"
+        description=("Safe form auto-submitter " "through ZAP")
     )
 
     parser.add_argument(
         "-i",
         "--input-file",
         default=DEFAULT_INPUT_FILE,
-        help="Filtered Katana file (default: katana.filtered.txt)",
     )
 
     parser.add_argument(
         "-o",
         "--output-file",
         default=DEFAULT_OUTPUT_FILE,
-        help="Output file with captured URLs (default: katana_filtered_2.txt)",
     )
 
     parser.add_argument(
         "-b",
         "--base-url",
         default=BASE_URL,
-        help="Base URL of target application",
     )
 
     parser.add_argument(
         "-p",
         "--proxy",
         default=PROXY_URL,
-        help="ZAP Proxy URL (default: http://127.0.0.1:8080)",
     )
 
     parser.add_argument(
         "--auth-user",
         default="admin",
-        help="Username to use for auto-login (default: admin)",
     )
 
     parser.add_argument(
         "--auth-pass",
         default="password",
-        help="Password to use for auto-login (default: password)",
     )
 
     parser.add_argument(
         "--no-auth",
-        dest="no_auth",
         action="store_true",
-        help="Disable automatic login (default: login as admin/password)",
+    )
+
+    parser.add_argument(
+        "-s",
+        "--sid",
+        help="Use existing PHPSESSID",
+    )
+
+    parser.add_argument(
+        "--cookie",
+        help=("Raw cookie string " '(example: "a=b; c=d")'),
     )
 
     args = parser.parse_args()
 
-    try:
-        processor = FormAutoSubmit(proxy_url=args.proxy, base_url=args.base_url, auth_user=args.auth_user, auth_pass=args.auth_pass, no_auth=args.no_auth)
-        processor.process_all(args.input_file, args.output_file)
-        print("\n[+] Success! Next step: python3 use-ZAP.py -i katana_filtered_2.txt")
+    processor = FormAutoSubmit(
+        proxy_url=args.proxy,
+        base_url=args.base_url,
+        auth_user=args.auth_user,
+        auth_pass=args.auth_pass,
+        no_auth=args.no_auth,
+        sid=args.sid,
+        cookie=args.cookie,
+    )
 
-    except Exception as e:
-        print(f"[!] Error: {e}")
+    processor.process_all(args.input_file, args.output_file)
 
 
 if __name__ == "__main__":
